@@ -77,7 +77,10 @@ export default async function handler(req, res) {
     // For now, engravingUrl == processedUrl (bg-removed layer if requested).
     // Next step: add an engraving-style transformation model AFTER this.
 
-    return res.status(200).json({ engravingUrl: processedUrl });
+   return res.status(200).json({
+  sourceForEngravingUrl: processedUrl,
+  engravingUrl: processedUrl
+});
   } catch (error) {
     console.error("Engrave error:", error);
     return res
