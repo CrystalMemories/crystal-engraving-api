@@ -1,0 +1,8 @@
+{
+  "name": "crystal-engraving-api",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "replicate": "^0.33.0"
+  }
+}
