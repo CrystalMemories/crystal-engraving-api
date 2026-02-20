@@ -1,59 +1,48 @@
+import Replicate from "replicate";
+
+const replicate = new Replicate({
+  auth: process.env.REPLICATE_API_TOKEN
+});
+
 export default async function handler(req, res) {
+  // CORS (we’ll tighten to your Shopify domain later)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") return res.status(204).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+
   try {
-    if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+    const { imageBase64, imageUrl, removeBackground } = req.body || {};
 
-    const { imageBase64, removeBackground, hasLightbase } = req.body || {};
-    if (!imageBase64) return res.status(400).json({ error: "Missing imageBase64" });
+    // Replicate can accept a data URL, so we build one from base64
+    const imageInput =
+      imageUrl ||
+      (imageBase64
+        ? (imageBase64.startsWith("data:")
+            ? imageBase64
+            : `data:image/png;base64,${imageBase64}`)
+        : null);
 
-    const basePrompt = `
-Create a realistic 3D laser crystal engraving render of the provided photo.
-
-OUTPUT REQUIREMENTS:
-- Transparent PNG background
-- Subject centered
-- No crystal, no product mockup, no frame
-- Only the engraved subject itself
-- High contrast grayscale
-- Clean edges, professional laser engraving style
-- Subject must fit fully within frame, no cropping
-- Keep original proportions
-- Minimum height 2000px
-`;
-
-    const bgPrompt = removeBackground
-      ? `Remove the background completely. Keep only the main subjects. Smooth clean cutout edges.`
-      : `Keep the original background but convert everything into subtle engraving style. Ensure the background is faint and does not overpower the subjects.`;
-
-    const lightPrompt = hasLightbase
-      ? `Slightly brighter engraving to simulate illuminated crystal.`
-      : `Slightly softer engraving to simulate non-illuminated crystal.`;
-
-    const prompt = `${basePrompt}\n${bgPrompt}\n${lightPrompt}`.trim();
-
-    const resp = await fetch("https://api.nanobananopro.com/process", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.NANO_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        image: imageBase64,
-        prompt
-      }),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      return res.status(500).json({ error: "NanoBanano error", details: text });
+    if (!imageInput) {
+      return res.status(400).json({ error: "Missing imageBase64 or imageUrl" });
     }
 
-    const data = await resp.json();
-    const engravingUrl = data.resultUrl || data.output_url || data.url;
+    let processedUrl = imageInput;
 
-    if (!engravingUrl) return res.status(500).json({ error: "Missing engraving URL in provider response" });
+    if (removeBackground) {
+      const output = await replicate.run("recraft-ai/recraft-remove-background", {
+        input: { image: imageInput }
+      });
+      processedUrl = output.url(); // transparent PNG
+    }
 
-    return res.status(200).json({ engravingUrl });
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", details: String(e) });
+    // For now, we return the processed layer (bg removed if requested).
+    // Next step: add engraving-style transformation.
+    return res.status(200).json({ engravingUrl: processedUrl });
+  } catch (error) {
+    console.error("Engrave error:", error);
+    return res.status(500).json({ error: "AI processing failed", details: String(error) });
   }
 }
