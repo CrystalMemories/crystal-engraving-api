@@ -5,9 +5,6 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
 
-/**
- * Run a Replicate model with automatic retry on 429 rate limits.
- */
 async function runWithRetry(model, input, maxRetries = 3) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -17,8 +14,8 @@ async function runWithRetry(model, input, maxRetries = 3) {
       const is429 = err?.status === 429 || errStr.includes("429") || errStr.includes("throttled");
       if (!is429 || attempt === maxRetries) throw err;
 
-      const waitMs = (attempt + 1) * 10000;
-      console.log(`[engrave] Rate limited on ${model}, waiting ${waitMs / 1000}s (attempt ${attempt + 1}/${maxRetries})`);
+      const waitMs = (attempt + 1) * 3000; // 3s, 6s, 9s
+      console.log(`[engrave] Rate limited, waiting ${waitMs / 1000}s (attempt ${attempt + 1}/${maxRetries})`);
       await new Promise((r) => setTimeout(r, waitMs));
     }
   }
@@ -62,8 +59,9 @@ export default async function handler(req, res) {
 
     let processedUrl = imageInput;
 
-    // --- Step 1: Background removal (optional) ---
+    // --- Background removal only (engraving effect is done client-side) ---
     if (removeBackground) {
+      console.log("[engrave] Running background removal...");
       const output = await runWithRetry("recraft-ai/recraft-remove-background", { image: imageInput });
       console.log("MODEL OUTPUT (remove-background):", output);
 
@@ -71,28 +69,13 @@ export default async function handler(req, res) {
       if (!processedUrl || typeof processedUrl !== "string" || !processedUrl.startsWith("http")) {
         throw new Error("Could not extract output URL. Got: " + JSON.stringify(output));
       }
+      console.log("[engrave] Background removed:", processedUrl.substring(0, 80) + "...");
     }
 
-    // --- Step 2: AI engraving via google/nano-banana ---
-    console.log("[engrave] Running engraving model (google/nano-banana)...");
-    const engraveOutput = await runWithRetry("google/nano-banana", {
-      image: processedUrl,
-      prompt:
-        "Convert this photo into a 3D crystal laser engraving. Monochrome white and light gray tones only, no color. Clean subsurface-etched look with fine detail, as if laser-engraved inside a glass crystal block. Transparent background.",
-    });
-
-    console.log("MODEL OUTPUT (engraving):", engraveOutput);
-
-    const engravingUrl = extractUrl(engraveOutput);
-    if (!engravingUrl || typeof engravingUrl !== "string") {
-      throw new Error("Could not extract engraving URL. Got: " + JSON.stringify(engraveOutput));
-    }
-
-    console.log("[engrave] Done!", engravingUrl.substring(0, 80) + "...");
-
+    // Return the bg-removed (or original) image URL.
+    // The engraving visual effect is applied CLIENT-SIDE for speed & consistency.
     return res.status(200).json({
-      sourceForEngravingUrl: processedUrl,
-      engravingUrl: engravingUrl,
+      engravingUrl: processedUrl,
     });
   } catch (error) {
     console.error("Engrave error:", error);
