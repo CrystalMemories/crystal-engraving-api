@@ -6,15 +6,11 @@ const replicate = new Replicate({
 });
 
 export default async function handler(req, res) {
-  // --- CORS (lock this down to your Shopify domain later) ---
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // Preflight
   if (req.method === "OPTIONS") return res.status(204).end();
-
-  // Basic validation
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
   if (!process.env.REPLICATE_API_TOKEN) {
@@ -24,7 +20,6 @@ export default async function handler(req, res) {
   try {
     const { imageBase64, imageUrl, removeBackground } = req.body || {};
 
-    // Replicate can accept a normal URL OR a data URL.
     const imageInput =
       imageUrl ||
       (imageBase64
@@ -45,10 +40,8 @@ export default async function handler(req, res) {
         input: { image: imageInput },
       });
 
-      // Helpful for debugging in Vercel logs
       console.log("MODEL OUTPUT (remove-background):", output);
 
-      // Robustly extract a usable URL from many possible output shapes
       if (typeof output === "string") {
         processedUrl = output;
       } else if (Array.isArray(output) && typeof output[0] === "string") {
@@ -65,7 +58,6 @@ export default async function handler(req, res) {
         throw new Error("Unexpected model output format: " + JSON.stringify(output));
       }
 
-      // Final sanity check
       if (typeof processedUrl !== "string" || !processedUrl.startsWith("http")) {
         throw new Error(
           "Could not extract output URL. Got: " + JSON.stringify(processedUrl)
@@ -73,14 +65,44 @@ export default async function handler(req, res) {
       }
     }
 
-    // NOTE:
-    // For now, engravingUrl == processedUrl (bg-removed layer if requested).
-    // Next step: add an engraving-style transformation model AFTER this.
+    // --- Step 2: AI engraving via google/nano-banana ---
+    console.log("[engrave] Running engraving model (google/nano-banana)...");
+    const engraveOutput = await replicate.run("google/nano-banana", {
+      input: {
+        image: processedUrl,
+        prompt:
+          "Convert this photo into a 3D crystal laser engraving. Monochrome white and light gray tones only, no color. Clean subsurface-etched look with fine detail, as if laser-engraved inside a glass crystal block. Transparent background.",
+      },
+    });
 
-   return res.status(200).json({
-  sourceForEngravingUrl: processedUrl,
-  engravingUrl: processedUrl
-});
+    console.log("MODEL OUTPUT (engraving):", engraveOutput);
+
+    let engravingUrl;
+    if (typeof engraveOutput === "string") {
+      engravingUrl = engraveOutput;
+    } else if (Array.isArray(engraveOutput) && typeof engraveOutput[0] === "string") {
+      engravingUrl = engraveOutput[0];
+    } else if (engraveOutput && typeof engraveOutput === "object") {
+      engravingUrl =
+        engraveOutput.url ||
+        engraveOutput.output ||
+        engraveOutput.image ||
+        engraveOutput.png ||
+        engraveOutput.result;
+    }
+
+    if (!engravingUrl || typeof engravingUrl !== "string") {
+      throw new Error(
+        "Could not extract engraving URL. Got: " + JSON.stringify(engraveOutput)
+      );
+    }
+
+    console.log("[engrave] Done!", engravingUrl.substring(0, 80) + "...");
+
+    return res.status(200).json({
+      sourceForEngravingUrl: processedUrl,
+      engravingUrl: engravingUrl,
+    });
   } catch (error) {
     console.error("Engrave error:", error);
     return res
