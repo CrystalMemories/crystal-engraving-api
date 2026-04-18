@@ -1,4 +1,4 @@
-// /api/engrave.js — v4: AI engraving with sharp post-processing + file upload fix
+// /api/engrave.js — v5: AI engraving with sharp post-processing + proper file upload
 // Deploy to: Vercel serverless function
 // Requires: npm install replicate sharp
 // Env vars: REPLICATE_API_TOKEN
@@ -11,7 +11,7 @@ const replicate = new Replicate({
 });
 
 // ─── Retry wrapper for Replicate rate limits ─────────────────────────
-async function runWithRetry(modelId, input, maxRetries = 3) {
+async function runWithRetry(modelId, input, maxRetries = 5) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await replicate.run(modelId, { input });
@@ -42,7 +42,7 @@ function extractUrl(output, label) {
   throw new Error(`[${label}] Could not extract URL from output: ${JSON.stringify(output).substring(0, 200)}`);
 }
 
-// ─── Ensure image is a proper URL (upload base64 if needed) ─────────
+// ─── Ensure image is a proper URL (upload base64 via Replicate HTTP API) ──
 async function ensurePublicUrl(input) {
   if (!input.startsWith("data:")) return input; // already a URL
 
@@ -52,9 +52,27 @@ async function ensurePublicUrl(input) {
   const mimeMatch = input.match(/data:([^;]+);/);
   const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
 
-  const blob = new Blob([buffer], { type: mimeType });
-  const fileUrl = await replicate.files.create(blob);
-  const url = String(fileUrl);
+  const formData = new FormData();
+  formData.append("content", new Blob([buffer], { type: mimeType }), "input.png");
+
+  const resp = await fetch("https://api.replicate.com/v1/files", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
+    },
+    body: formData,
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Replicate file upload failed (${resp.status}): ${errText}`);
+  }
+
+  const data = await resp.json();
+  const url = data.urls?.get;
+  if (!url) {
+    throw new Error(`Replicate file upload returned no URL: ${JSON.stringify(data).substring(0, 200)}`);
+  }
   console.log("[engrave] Uploaded:", url.substring(0, 80) + "...");
   return url;
 }
