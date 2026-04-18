@@ -10,7 +10,7 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
 
-// ─── Retry wrapper for Replicate rate limits ─────────────────────────
+// ─── Retry wrapper for Replicate rate limits ───────��─────────────────
 async function runWithRetry(modelId, input, maxRetries = 5) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -83,6 +83,8 @@ const PROMPT_BG_REMOVED = [
   "White on pure black background.",
   "The result should look nearly photographic but rendered entirely in fine white points.",
   "Smooth continuous tonal range from dense bright areas to sparse dark areas.",
+  "IMPORTANT: Only render the main subject (person, pet, or object). The background must be completely pure black with absolutely no remnants, shadows, ground, floor, grass, furniture, or any environmental elements visible.",
+  "Cleanly isolate the subject with sharp edges against the pure black void.",
   "No visible dot pattern, no stipple texture, no dithering artifacts.",
   "Preserve exact facial likeness, proportions, and all fine details.",
   "No stylization, no glow, no blur, no glass, no crystal object.",
@@ -93,7 +95,8 @@ const PROMPT_BG_KEPT = [
   "Convert this photo into a high-density monochrome laser engraving render.",
   "White on pure black background.",
   "The result should look nearly photographic but rendered entirely in fine white points.",
-  "Smooth continuous tonal range from dense bright areas to sparse dark areas.",
+  "Use a wide tonal range: bright whites for highlights, medium grays for midtones, and dim but still visible grays for shadows and dark areas.",
+  "Dark regions of the original photo should still be rendered with visible detail — use faint white/gray tones, not pure black.",
   "Include the full scene with background and all elements.",
   "No visible dot pattern, no stipple texture, no dithering artifacts.",
   "Preserve exact likeness, proportions, composition, and all fine details.",
@@ -129,14 +132,18 @@ async function convertBlackToTransparent(imageUrl) {
     const b = data[srcIdx + 2];
 
     // Perceptual luminance
-    const luminance = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 
-    // White pixel, luminance becomes alpha
-    // This maps black (0) → fully transparent, white (255) → nearly opaque
+    // Apply gamma correction (0.6) to boost midtones and shadows
+    // so dark areas remain visible instead of vanishing to transparent
+    const boosted = Math.pow(luminance, 0.6);
+    const alpha = Math.round(boosted * 255);
+
+    // White pixel, boosted luminance becomes alpha
     output[dstIdx] = 255;     // R
     output[dstIdx + 1] = 255; // G
     output[dstIdx + 2] = 255; // B
-    output[dstIdx + 3] = luminance; // A = luminance
+    output[dstIdx + 3] = alpha; // A = gamma-boosted luminance
   }
 
   const pngBuffer = await sharp(output, {
