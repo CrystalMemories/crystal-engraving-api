@@ -1,4 +1,4 @@
-// /api/engrave.js — v3: AI engraving with sharp post-processing
+// /api/engrave.js — v4: AI engraving with sharp post-processing + file upload fix
 // Deploy to: Vercel serverless function
 // Requires: npm install replicate sharp
 // Env vars: REPLICATE_API_TOKEN
@@ -40,6 +40,23 @@ function extractUrl(output, label) {
     if (typeof url === "string") return url;
   }
   throw new Error(`[${label}] Could not extract URL from output: ${JSON.stringify(output).substring(0, 200)}`);
+}
+
+// ─── Ensure image is a proper URL (upload base64 if needed) ─────────
+async function ensurePublicUrl(input) {
+  if (!input.startsWith("data:")) return input; // already a URL
+
+  console.log("[engrave] Uploading base64 image to Replicate file storage...");
+  const base64Data = input.split(",")[1];
+  const buffer = Buffer.from(base64Data, "base64");
+  const mimeMatch = input.match(/data:([^;]+);/);
+  const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+
+  const blob = new Blob([buffer], { type: mimeType });
+  const fileUrl = await replicate.files.create(blob);
+  const url = String(fileUrl);
+  console.log("[engrave] Uploaded:", url.substring(0, 80) + "...");
+  return url;
 }
 
 // ─── Prompts ─────────────────────────────────────────────────────────
@@ -151,8 +168,9 @@ export default async function handler(req, res) {
     // ── Step 1: Background removal (optional) ──
     if (removeBackground) {
       console.log("[engrave] Step 1: Removing background...");
+      const bgImageUrl = await ensurePublicUrl(imageInput);
       const bgOutput = await runWithRetry("recraft-ai/recraft-remove-background", {
-        image: imageInput,
+        image: bgImageUrl,
       });
       processedUrl = extractUrl(bgOutput, "remove-background");
       console.log("[engrave] Background removed:", processedUrl.substring(0, 80) + "...");
@@ -162,8 +180,9 @@ export default async function handler(req, res) {
     const prompt = removeBackground ? PROMPT_BG_REMOVED : PROMPT_BG_KEPT;
     console.log(`[engrave] Step 2: Running engraving model (removeBackground=${removeBackground})...`);
 
+    const engraveImageUrl = await ensurePublicUrl(processedUrl);
     const engraveOutput = await runWithRetry("google/nano-banana-pro", {
-      image_input: [processedUrl],
+      image_input: [engraveImageUrl],
       prompt,
     });
     const rawEngravingUrl = extractUrl(engraveOutput, "engraving");
@@ -188,4 +207,3 @@ export default async function handler(req, res) {
     });
   }
 }
-
