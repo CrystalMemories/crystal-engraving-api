@@ -163,7 +163,7 @@ export default async function handler(req, res) {
     console.log(`[engrave] Step 2: Running engraving model (removeBackground=${removeBackground})...`);
 
     const engraveOutput = await runWithRetry("google/nano-banana-pro", {
-      image_input: processedUrl,
+      image_input: [processedUrl],
       prompt,
     });
     const rawEngravingUrl = extractUrl(engraveOutput, "engraving");
